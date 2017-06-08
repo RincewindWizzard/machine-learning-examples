@@ -41,8 +41,10 @@ def showFitGraph(original, *predictions, training_data=None):
 
   count = 1 + len(predictions)
   rowsize = 6
-  f, ax = plt.subplots(math.ceil(count // rowsize), min(count, rowsize))
-  left = ax[0][0]
+  cols = math.ceil(count / rowsize)
+
+  f, ax = plt.subplots(cols, min(count, rowsize))
+  left = ax[(0, 0) if cols > 1 else 0]
   left.set_title('Training data')
   
 
@@ -61,7 +63,7 @@ def showFitGraph(original, *predictions, training_data=None):
   left.axis([0, width-1, 0, height-1])
 
   for i, (title, prediction) in enumerate(predictions):
-    graph = ax[(i + 1) // rowsize][(i + 1) % rowsize]
+    graph = ax[((i + 1) // rowsize, (i + 1) % rowsize)  if cols > 1 else (i+1)]
     graph.imshow(prediction, cmap='Greys')
     graph.axis([0, width-1, 0, height-1])
 
@@ -138,7 +140,7 @@ def main():
   data = training_data(image, 1000)
 
   images = [('SVM', test(image, learnSVM, data))]
-  for i in range(16):
+  for i in range(1):
     images.append((
       'MLP', 
       test(
