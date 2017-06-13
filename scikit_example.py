@@ -1,16 +1,21 @@
+import os
 import math
 import random
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 from scipy import misc
-from sklearn import svm
-from sklearn.neural_network import MLPClassifier
-from sklearn.preprocessing import StandardScaler
- 
+import argparse
+import importlib
+from datetime import datetime
 
 
 def training_data(universe, n = 10):
+  """
+  * This function draws a training dataset from the input universe,
+  * which is a numpy.array with a known shape.
+  * The second argument specifies how big the trainingset should be.
+  """
   width, height = universe.shape
   if n > width*height: raise ValueError("Not enough input space for sample size!")
 
@@ -19,10 +24,15 @@ def training_data(universe, n = 10):
 
   return data
 
-def normalize_data(data, width, height):
-  return [ [d[0]/width, d[1]/height] + d[2:] for d in data]
+def normalize_data(data, max_x, max_y):
+  """ Normalize your data points to the interval [0:1] """
+  return [ [d[0]/max_x, d[1]/max_y] + d[2:] for d in data]
+
 
 def difference_image(imga, imgb):
+  """
+  * Compares two images and returns the pixels, that are different
+  """
   if not imga.shape == imgb.shape: raise ValueError("The two images have unequal shapes!")
 
   errors = 0
@@ -36,9 +46,18 @@ def difference_image(imga, imgb):
       row.append(int(not correct))
   return np.array(diff), errors
 
-def showFitGraph(original, *predictions, training_data=None):
+
+def showResults(original, *predictions, training_data=None):
+  """
+  * Draw the original universe (an image array) side by side with the prediction images
+  * from the learning algorithms.
+  * prediction is a list of tuples (title, image).
+  * If you specify the training data, green pixels are drawn in the original image 
+  * showing the positions of the training data points.
+  """
   width, height = original.shape
 
+  # show graphs in multiple rows if not enough space available
   count = 1 + len(predictions)
   rowsize = 6
   cols = math.ceil(count / rowsize)
@@ -46,11 +65,10 @@ def showFitGraph(original, *predictions, training_data=None):
   f, ax = plt.subplots(cols, min(count, rowsize))
   left = ax[(0, 0) if cols > 1 else 0]
   left.set_title('Training data')
-  
 
+  left.imshow(original, cmap='binary')
 
-  left.imshow(original, cmap='Greys')
-  #data = data[:100]
+  # if training data given, show them
   if not None == training_data:
     left.set_title(
       'Training data ({:0.2f} % of area covered)'.format(
@@ -62,64 +80,38 @@ def showFitGraph(original, *predictions, training_data=None):
     )
   left.axis([0, width-1, 0, height-1])
 
+  # draw a graph for every prediction
   for i, (title, prediction) in enumerate(predictions):
     graph = ax[((i + 1) // rowsize, (i + 1) % rowsize)  if cols > 1 else (i+1)]
-    graph.imshow(prediction, cmap='Greys')
+    graph.imshow(prediction, cmap='binary')
     graph.axis([0, width-1, 0, height-1])
 
 
+    # create a colormap from alpha to black
     cmap = plt.cm.Wistia
-    # Get the colormap colors
     my_cmap = cmap(np.arange(cmap.N))
-
-    # Set alpha
     my_cmap[:,-1] = np.linspace(0, 0.5, cmap.N)
-
-    # Create new colormap
     my_cmap = ListedColormap(my_cmap)
     
     diffimg, errors = difference_image(original, prediction)
-    graph.set_title('{} ({:0.2f} % accurancy)'.format(title, 100 - 100* errors / (width*height)))
-    #right.imshow(diffimg, cmap=my_cmap)
+    graph.set_title(
+      '{} ({:0.2f} % accurancy)'.format(
+        title, 
+        100 - 100* errors / (width*height)
+    ))
 
+  result_path = os.path.join(
+    'results',
+    datetime.now().isoformat() + '.png'
+  )
+  plt.savefig(result_path)
   plt.show()
 
 
-
-def learnSVM(data):
-  inputs  = [ x[:2] for x in data ]
-  targets = [ x[2]  for x in data ]
-  clf = svm.SVC(gamma=0.001, C=100.)
-  clf.fit(inputs, targets)
-  return clf.predict
-
-def learnMLP(hidden_layer_sizes=(4)):
-  def learn(data):
-    inputs  = [ x[:2] for x in data ]
-    targets = [ int(bool(x[2]))  for x in data ]
-
-    scaler = StandardScaler()  
-    # Don't cheat - fit only on training data
-    scaler.fit(inputs)  
-    data = scaler.transform(inputs)  
-
-
-    clf = MLPClassifier(
-      solver='lbfgs', 
-      alpha=1e-5, 
-      hidden_layer_sizes=hidden_layer_sizes, 
-      random_state=1
-    )
-    clf.fit(inputs, targets)
-
-    def predict(test_data):
-      # apply same transformation to test data
-      test_data = scaler.transform(test_data)
-      return clf.predict(test_data)
-    return predict
-  return learn
-
 def test(image, learn, data, normalize=False):
+  """
+  * Generate a prediction image for a learning algorithm using given training data set.
+  """
   if normalize:
     data = normalize_data(data, *image.shape)
 
@@ -135,20 +127,38 @@ def test(image, learn, data, normalize=False):
   prediction = predict([[x, y] for x in xs for y in ys]).reshape(image.shape)
   return prediction
 
-def main():
-  image = misc.imread('datasets/bezier_diagonal_2.png')
-  data = training_data(image, 1000)
+def main(img_path, training_size, *algorithms):
+  # read an image
+  image = np.flipud(misc.imread(img_path, flatten=True))
 
-  images = [('SVM', test(image, learnSVM, data))]
-  for i in range(1):
-    images.append((
-      'MLP', 
-      test(
-        image, 
-        learnMLP(
-          hidden_layer_sizes = (10*i+2, 10*i+2, 10*i+2, 10*i+2,)
-      ), data, normalize=True)))
+  # choose a training set
+  data = training_data(image, training_size)
 
-  showFitGraph(image, *images, training_data=data)
+  from svm_solver import learn as learnSVM
+  from mlp_solver import learn as learnMLP
+
+  images = []
+  
+  for algorithm in algorithms:
+    module = importlib.import_module(algorithm)   
+    normalize = module.normalize if hasattr(module, 'normalize') else False
+    image_result = test(image, module.learn, data, normalize=normalize)
+    images.append((module.__name__, image_result))
+
+  
+  showResults(image, *images, training_data=data)
+
+
 if __name__ == '__main__':
-  main()
+  parser = argparse.ArgumentParser(description='Machine learning tester')
+  parser.add_argument('image_path', type=str,
+                      help='Path to an image of the known universe.')
+  parser.add_argument('training_size', metavar='n', type=int,
+                      help='How many elements should be in the training data set?')
+
+  parser.add_argument('algorithm', type=str, nargs='+',
+                      help='Specify a module, which contains the learning algorithm.')
+
+
+  args = parser.parse_args()
+  main(args.image_path, args.training_size, *args.algorithm)
